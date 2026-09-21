@@ -2,7 +2,7 @@
  * Select — Dropdown đơn dùng native <select> + style chuẩn
  * (Dùng Listbox của Headless UI khi cần custom render option phức tạp)
  */
-import { forwardRef, useId } from 'react';
+import { memo, forwardRef, useId } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
@@ -84,4 +84,20 @@ const Select = forwardRef(function Select(
   );
 });
 
-export default Select;
+function selectPropsEqual(prev, next) {
+  // Bỏ qua re-render khi value/error/hint/options/disabled không đổi.
+  return (
+    prev.value === next.value &&
+    prev.error === next.error &&
+    prev.hint === next.hint &&
+    prev.disabled === next.disabled &&
+    prev.required === next.required &&
+    prev.label === next.label &&
+    prev.placeholder === next.placeholder &&
+    prev.className === next.className &&
+    prev.selectClassName === next.selectClassName &&
+    prev.options === next.options
+  );
+}
+
+export default memo(Select, selectPropsEqual);

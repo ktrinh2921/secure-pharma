@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Khởi động lại toàn bộ SecurePharma (Backend + Frontend).
 
@@ -60,13 +60,23 @@ function Close-Windows {
 }
 
 function Wait-Port {
-    param([int]$Port, [int]$TimeoutSec = 45)
+    param([int]$Port, [int]$TimeoutSec = 120)
     for ($i = 0; $i -lt $TimeoutSec; $i++) {
         $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
         if ($conn) { return $true }
         Start-Sleep -Seconds 1
     }
     return $false
+}
+
+# Lấy IP LAN (IPv4, không phải loopback) — dùng cho banner & hướng dẫn LAN
+function Get-LanIp {
+    try {
+        $addrs = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.PrefixOrigin -ne 'WellKnown' }
+        if ($addrs) { return ($addrs | Select-Object -First 1).IPAddress }
+    } catch { }
+    return $null
 }
 
 # ---------------------------------------------------------------
@@ -112,24 +122,35 @@ $feProc = Start-Process powershell `
 # 3. Đợi ports sẵn sàng
 # ---------------------------------------------------------------
 Write-Host "⏳ Waiting for backend  on :$bePort ..." -NoNewline -ForegroundColor Gray
-$beOk = Wait-Port $bePort 45
+$beOk = Wait-Port $bePort 120
 if ($beOk) { Write-Host " ready ✅" -ForegroundColor Green } else { Write-Host " TIMEOUT ❌" -ForegroundColor Red }
 
 Write-Host "⏳ Waiting for frontend on :$fePort ..." -NoNewline -ForegroundColor Gray
-$feOk = Wait-Port $fePort 45
+$feOk = Wait-Port $fePort 120
 if ($feOk) { Write-Host " ready ✅" -ForegroundColor Green } else { Write-Host " TIMEOUT ❌" -ForegroundColor Red }
 
 # ---------------------------------------------------------------
 # 4. Banner kết quả
 # ---------------------------------------------------------------
+$lanIp = Get-LanIp
 Write-Host ""
 Write-Host "╔════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║           SecurePharma dev environment READY          ║" -ForegroundColor Cyan
 Write-Host "╠════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-Write-Host "║  🌐 App:        http://localhost:$fePort                  ║" -ForegroundColor Cyan
-Write-Host "║  🔌 API:        http://localhost:$bePort/api              ║" -ForegroundColor Cyan
-Write-Host "║  📊 Health:     http://localhost:$bePort/api/health       ║" -ForegroundColor Cyan
-Write-Host "║  👤 Demo:       admin.huong / Admin@2026               ║" -ForegroundColor Cyan
+Write-Host "║  🌐 App (local):   http://localhost:$fePort                ║" -ForegroundColor Cyan
+Write-Host "║  🔌 API (local):   http://localhost:$bePort/api            ║" -ForegroundColor Cyan
+Write-Host "║  📊 Health:        http://localhost:$bePort/api/health     ║" -ForegroundColor Cyan
+Write-Host "║  👤 Demo:          admin.huong / Admin@2026             ║" -ForegroundColor Cyan
+Write-Host "║                                                       ║" -ForegroundColor Cyan
+if ($lanIp) {
+    Write-Host "║  🌐─── TRUY CẬP TỪ MÁY KHÁC TRONG CÙNG MẠNG LAN ───  ║" -ForegroundColor Yellow
+    Write-Host ("║  🌐 App:        http://{0}:$fePort                ║" -f $lanIp) -ForegroundColor Yellow
+    Write-Host ("║  🔌 API:        http://{0}:$bePort/api            ║" -f $lanIp) -ForegroundColor Yellow
+    Write-Host "║  ⚠️  FE→BE proxy phải trỏ về IP LAN của máy này:      ║" -ForegroundColor Yellow
+    Write-Host ("║     frontend/.env → VITE_API_URL=http://{0}:$bePort  ║" -f $lanIp) -ForegroundColor Yellow
+    Write-Host "║     (rồi restart FE để Vite đọc env mới)              ║" -ForegroundColor Yellow
+    Write-Host "║  ⚠️  Windows Firewall: mở port $bePort (TCP, In) cho mạng Private. ║" -ForegroundColor Yellow
+}
 Write-Host "║                                                       ║" -ForegroundColor Cyan
 Write-Host "║  • Đóng cửa sổ Backend/Frontend đang mở để tắt.       ║" -ForegroundColor Cyan
 Write-Host "║  • Hoặc nhấn Ctrl+C TRONG cửa sổ này để stop cả 2.    ║" -ForegroundColor Cyan

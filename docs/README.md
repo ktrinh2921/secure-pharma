@@ -16,6 +16,8 @@ Mọi tài liệu của dự án SecurePharma được lưu trữ tại folder n
 | [`CRUD_MODAL_AUDIT.md`](./CRUD_MODAL_AUDIT.md) | 🔍 Audit + test plan + đề xuất cải thiện modal CRUD (16/09/2026) |
 | [`API.md`](./API.md) | 🔌 Tài liệu tham chiếu Backend API (~70 endpoints, 13 module) |
 | [`SECURITY.md`](./SECURITY.md) | 🔒 Giải thích các cơ chế bảo mật (RBAC, JWT, bcrypt, AES, XSS, rate-limit, audit) — không code, chỉ giải thích |
+| [`USE_CASE.md`](./USE_CASE.md) | 🎭 Sơ đồ & đặc tả 29 Use Case + Sequence Diagram (Bán hàng, Huỷ HĐ) + Activity Diagram (Nhập thuốc) |
+| [`BACKEND_TECH_STACK.md`](./BACKEND_TECH_STACK.md) | 🔧 Công nghệ cốt lõi Backend (Node/Express/SQL Server + JWT/bcrypt/helmet) |
 
 ## 🗄️ Archive (đã đóng băng)
 

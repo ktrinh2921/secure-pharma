@@ -127,18 +127,19 @@ export default function Modal({
   return (
     <Transition show={open} as={Fragment}>
       <Dialog onClose={onClose} className="relative z-50">
-        {/* Backdrop */}
+        {/* Backdrop — bỏ backdrop-blur-sm (rất nặng cho GPU khi animation),
+            dùng overlay đậm hơn để vẫn đạt hiệu ứng "phông mờ" mà không tốn FPS */}
         <Transition.Child
           as={Fragment}
-          enter="ease-out duration-200"
+          enter="ease-out duration-150"
           enterFrom="opacity-0"
           enterTo="opacity-100"
-          leave="ease-in duration-150"
+          leave="ease-in duration-100"
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
           <div
-            className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm"
+            className="fixed inset-0 bg-neutral-900/70"
             aria-hidden="true"
           />
         </Transition.Child>
@@ -148,12 +149,12 @@ export default function Modal({
           <div className="flex min-h-full items-center justify-center p-4 sm:p-6">
             <Transition.Child
               as={Fragment}
-              enter="ease-out duration-200"
-              enterFrom="opacity-0 translate-y-3 scale-95"
-              enterTo="opacity-100 translate-y-0 scale-100"
-              leave="ease-in duration-150"
-              leaveFrom="opacity-100 translate-y-0 scale-100"
-              leaveTo="opacity-0 translate-y-2 scale-95"
+              enter="ease-out duration-150"
+              enterFrom="opacity-0 scale-95"
+              enterTo="opacity-100 scale-100"
+              leave="ease-in duration-100"
+              leaveFrom="opacity-100 scale-100"
+              leaveTo="opacity-0 scale-95"
             >
               <Dialog.Panel
                 className={cn(
@@ -175,12 +176,10 @@ export default function Modal({
                         : 'bg-white text-neutral-900 border-b border-neutral-200'
                     )}
                   >
-                    {/* Decorative blobs (chỉ khi gradient) */}
+                    {/* Decorative blob — bỏ để giảm repaint; vẫn giữ gradient header
+                        để không mất hoàn toàn chiều sâu thị giác. */}
                     {gradientHeader && (
-                      <>
-                        <div className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-white/10" />
-                        <div className="pointer-events-none absolute -bottom-12 right-20 h-24 w-24 rounded-full bg-white/5" />
-                      </>
+                      <div className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-white/8" />
                     )}
 
                     <div className="relative flex items-start justify-between gap-4">

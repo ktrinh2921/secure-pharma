@@ -14,7 +14,7 @@
  *                    số HĐ, số phiếu nhập, ngày vào
  *  • Modal chi tiết: profile + stats tích lũy + lịch sử hóa đơn
  */
-import { useState, useEffect, useCallback } from 'react';
+import { memo, useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import {
     UserCog, Plus, Edit2, Trash2, Users, Eye, Phone, Calendar,
@@ -102,6 +102,9 @@ function EmployeeAvatar({ name, role }) {
     );
 }
 
+// Memo: avatar chỉ rerender khi name/role đổi → giảm render 20+ avatar khi gõ phím
+const EmployeeAvatarMemo = memo(EmployeeAvatar);
+
 // ─── Stat mini ────────────────────────────────────────────────────────────────
 
 const STAT_MINI_COLOR = {
@@ -139,7 +142,7 @@ function EmployeeDetailModal({ nv, hoaDon = [], phieuNhap = [], loadingHD = fals
             <div className="space-y-6">
                 {/* Header row */}
                 <div className="flex items-start gap-4">
-                    <EmployeeAvatar name={nv.TenNV} role={nv.VaiTro} />
+                    <EmployeeAvatarMemo name={nv.TenNV} role={nv.VaiTro} />
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                             <h2 className="text-h2 text-neutral-900 truncate">{nv.TenNV}</h2>
@@ -382,6 +385,394 @@ function EmployeeDetailModal({ nv, hoaDon = [], phieuNhap = [], loadingHD = fals
     );
 }
 
+// Memo: EmployeeDetailModal chứa 2 bảng lịch sử + stats grid — nặng.
+// Khi user gõ phím trong modal thêm/sửa NV hoặc search debounce thay đổi
+// state ở page, prop `nv` vẫn giữ nguyên nên memo giúp React skip render toàn bộ cây.
+const EmployeeDetailModalMemo = memo(EmployeeDetailModal);
+
+// ─── Employee Form Modal (Thêm / Sửa) ────────────────────────────────────────
+//
+// Tách riêng + memo + lazy-mount (`open=false` → return null) để:
+//  1. Form state không làm page re-render (mỗi keystroke chỉ re-render modal này).
+//  2. Cây DOM ảo của form (15+ Input/Select) không tồn tại khi modal đóng →
+//     không phải diff mỗi lần page rerender.
+//  3. Memo ở parent level giúp table/pagination/stats không bị ảnh hưởng.
+
+function EmployeeFormModal({ open, editing, onClose, onSuccess }) {
+    // Hook phải gọi unconditionally — nhưng nếu !open thì không dùng state.
+    // Để tránh "different hooks order" warning, ta vẫn mount hooks nhưng
+    // state initialization chỉ chạy 1 lần.
+    const [formData, setFormData] = useState(() => ({
+        tenNV: '', sdt: '', gioiTinh: '', luong: '', email: '', chucVu: '',
+        diaChi: '', ngayVaoLam: '', trangThai: 'DangLam', ghiChu: '',
+    }));
+    const [formError, setFormError] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [createAccountForm, setCreateAccountForm] = useState(() => ({
+        enable: false, tenDangNhap: '', matKhau: '',
+        vaiTro: 'NV_BanHang', trangThai: 'HoatDong', autoPassword: true,
+    }));
+
+    // Sync state khi mở modal / đổi `editing`
+    useEffect(() => {
+        if (!open) return;
+        if (editing) {
+            setFormData({
+                tenNV: editing.TenNV || '',
+                sdt: editing.SDT || '',
+                gioiTinh: editing.GioiTinh || '',
+                luong: editing.Luong ?? '',
+                email: editing.Email || '',
+                chucVu: editing.ChucVu || '',
+                diaChi: editing.DiaChi || '',
+                ngayVaoLam: editing.NgayVaoLam
+                    ? new Date(editing.NgayVaoLam).toISOString().split('T')[0]
+                    : '',
+                trangThai: editing.TrangThai || 'DangLam',
+                ghiChu: editing.GhiChu || '',
+            });
+            setCreateAccountForm({
+                enable: false, tenDangNhap: '', matKhau: '',
+                vaiTro: 'NV_BanHang', trangThai: 'HoatDong', autoPassword: true,
+            });
+        } else {
+            setFormData({
+                tenNV: '', sdt: '', gioiTinh: '', luong: '', email: '', chucVu: '',
+                diaChi: '', ngayVaoLam: new Date().toISOString().split('T')[0],
+                trangThai: 'DangLam', ghiChu: '',
+            });
+            setCreateAccountForm({
+                enable: false, tenDangNhap: '', matKhau: '',
+                vaiTro: 'NV_BanHang', trangThai: 'HoatDong', autoPassword: true,
+            });
+        }
+        setFormError('');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, editing?.MaNV]);
+
+    // Stable updater — dùng functional update để không phụ thuộc `formData` cũ
+    const updateForm = useCallback((patch) => {
+        setFormData((prev) => ({ ...prev, ...patch }));
+    }, []);
+    const updateAccountForm = useCallback((patch) => {
+        setCreateAccountForm((prev) => ({ ...prev, ...patch }));
+    }, []);
+
+    // Stable onChange handlers — Input/Select đã memo + custom areEqual,
+    // giờ onChange cũng ổn định → memo phát huy tác dụng, 14 input không rerender khi gõ 1 input.
+    const onTenNV = useCallback((e) => updateForm({ tenNV: e.target.value }), [updateForm]);
+    const onSDT = useCallback((e) => updateForm({ sdt: e.target.value }), [updateForm]);
+    const onEmail = useCallback((e) => updateForm({ email: e.target.value }), [updateForm]);
+    const onChucVu = useCallback((e) => updateForm({ chucVu: e.target.value }), [updateForm]);
+    const onDiaChi = useCallback((e) => updateForm({ diaChi: e.target.value }), [updateForm]);
+    const onGioiTinh = useCallback((v) => updateForm({ gioiTinh: v }), [updateForm]);
+    const onLuong = useCallback((e) => {
+        const val = e.target.value;
+        updateForm({ luong: val === '' ? '' : Number(val) });
+    }, [updateForm]);
+    const onNgayVaoLam = useCallback((e) => updateForm({ ngayVaoLam: e.target.value }), [updateForm]);
+    const onTrangThai = useCallback((v) => updateForm({ trangThai: v }), [updateForm]);
+    const onGhiChu = useCallback((e) => updateForm({ ghiChu: e.target.value }), [updateForm]);
+
+    const onEnableAccount = useCallback((e) => updateAccountForm({ enable: e.target.checked }), [updateAccountForm]);
+    const onTenDangNhap = useCallback((e) => updateAccountForm({ tenDangNhap: e.target.value }), [updateAccountForm]);
+    const onVaiTro = useCallback((v) => updateAccountForm({ vaiTro: v }), [updateAccountForm]);
+    const onTrangThaiTK = useCallback((v) => updateAccountForm({ trangThai: v }), [updateAccountForm]);
+    const onAutoPwd = useCallback((e) => updateAccountForm({ autoPassword: e.target.checked, matKhau: '' }), [updateAccountForm]);
+    const onMatKhau = useCallback((e) => updateAccountForm({ matKhau: e.target.value }), [updateAccountForm]);
+
+    const handleSubmit = useCallback(async (e) => {
+        e.preventDefault();
+        setFormError('');
+        if (!formData.tenNV.trim()) {
+            setFormError('Vui lòng nhập tên nhân viên');
+            return;
+        }
+        setSubmitting(true);
+        try {
+            const payload = {
+                ...formData,
+                luong: formData.luong === '' ? 0 : Number(formData.luong) || 0,
+            };
+            if (editing) {
+                await nhanVienService.update(editing.MaNV, payload);
+                toast.success('Cập nhật thành công');
+            } else if (createAccountForm.enable) {
+                const tkPayload = {
+                    tenDangNhap: createAccountForm.tenDangNhap.trim(),
+                    vaiTro: createAccountForm.vaiTro,
+                    trangThai: createAccountForm.trangThai,
+                    autoUsername: !createAccountForm.tenDangNhap,
+                    autoPassword: createAccountForm.autoPassword && !createAccountForm.matKhau,
+                };
+                if (createAccountForm.matKhau) tkPayload.matKhau = createAccountForm.matKhau;
+
+                const res = await nhanVienService.createWithAccount(payload, tkPayload);
+                toast.success('Tạo nhân viên và cấp tài khoản thành công');
+                if (res?.data?.matKhauTam) {
+                    onSuccess?.({
+                        type: 'tempPassword',
+                        data: {
+                            tenDangNhap: res.data.taiKhoan.TenDangNhap,
+                            matKhauTam: res.data.matKhauTam,
+                            tenNV: formData.tenNV,
+                            action: 'create',
+                        },
+                    });
+                }
+            } else {
+                await nhanVienService.create(payload);
+                toast.success('Tạo nhân viên thành công');
+            }
+            onClose?.();
+            onSuccess?.({ type: 'reload' });
+        } catch (err) {
+            const msg = err.response?.data?.error?.message || 'Thao tác thất bại';
+            setFormError(msg);
+            toast.error(msg);
+        } finally {
+            setSubmitting(false);
+        }
+    }, [formData, editing, createAccountForm, onClose, onSuccess]);
+
+    // Lazy-mount: khi đóng, trả về null → React unmount hoàn toàn cây modal
+    // → không tốn DOM ảo, không tốn re-render khi page state đổi.
+    if (!open) return null;
+
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            title={editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}
+            description={editing ? 'Cập nhật thông tin nhân viên.' : 'Tạo hồ sơ nhân viên mới và cấp tài khoản đăng nhập (tuỳ chọn).'}
+            icon={editing ? <Edit2 /> : <Plus />}
+            size="xl"
+        >
+            <form onSubmit={handleSubmit} className="space-y-5">
+                {/* ── Section 1: Thông tin cơ bản ───────────────────────── */}
+                <div>
+                    <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
+                        Thông tin cơ bản
+                    </h3>
+                    <div className="space-y-4">
+                        <Input
+                            label="Tên nhân viên"
+                            required
+                            value={formData.tenNV}
+                            onChange={onTenNV}
+                            maxLength={200}
+                            placeholder="VD: Nguyễn Văn An"
+                        />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <Input
+                                label="Số điện thoại"
+                                value={formData.sdt}
+                                onChange={onSDT}
+                                placeholder="VD: 0912345678"
+                            />
+                            <Input
+                                label="Email"
+                                type="email"
+                                value={formData.email}
+                                onChange={onEmail}
+                                placeholder="VD: nguyen.van.an@email.com"
+                            />
+                            <Select
+                                label="Giới tính"
+                                value={formData.gioiTinh}
+                                onChange={onGioiTinh}
+                                options={[
+                                    { value: '', label: '—' },
+                                    { value: 'Nam', label: 'Nam' },
+                                    { value: 'Nữ', label: 'Nữ' },
+                                    { value: 'Khác', label: 'Khác' },
+                                ]}
+                                placeholder="—"
+                            />
+                            <Input
+                                label="Chức vụ"
+                                value={formData.chucVu}
+                                onChange={onChucVu}
+                                placeholder="VD: Nhân viên bán hàng, Quản lý, Trưởng phòng..."
+                            />
+                        </div>
+                        <Input
+                            label="Địa chỉ"
+                            value={formData.diaChi}
+                            onChange={onDiaChi}
+                            placeholder="VD: 123 Nguyễn Trãi, Quận 1, TP.HCM"
+                        />
+                    </div>
+                </div>
+
+                {/* ── Divider ──────────────────────────────────────────── */}
+                <div className="border-t border-neutral-200" />
+
+                {/* ── Section 2: Công việc & lương ────────────────────── */}
+                <div>
+                    <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
+                        Công việc &amp; lương
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <Input
+                            label="Lương cơ bản"
+                            type="number"
+                            min="0"
+                            step="100000"
+                            value={formData.luong}
+                            onChange={onLuong}
+                            placeholder="VD: 5000000"
+                            hint="VND"
+                        />
+                        <Input
+                            label="Ngày vào làm"
+                            type="date"
+                            value={formData.ngayVaoLam}
+                            onChange={onNgayVaoLam}
+                        />
+                        <Select
+                            label="Trạng thái"
+                            value={formData.trangThai}
+                            onChange={onTrangThai}
+                            options={[
+                                { value: 'DangLam', label: 'Đang làm' },
+                                { value: 'NghiViec', label: 'Nghỉ việc' },
+                            ]}
+                        />
+                    </div>
+                </div>
+
+                {/* ── Section 3: Ghi chú ─────────────────────────────── */}
+                <div>
+                    <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
+                        Ghi chú
+                    </h3>
+                    <textarea
+                        className="w-full h-20 px-3 py-2 text-body text-neutral-900 bg-white border border-neutral-300 rounded-btn
+                            placeholder:text-neutral-400 resize-none
+                            focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500
+                            disabled:bg-neutral-50 disabled:text-neutral-500"
+                        value={formData.ghiChu}
+                        onChange={onGhiChu}
+                        placeholder="Ghi chú thêm về nhân viên..."
+                        maxLength={1000}
+                    />
+                </div>
+
+                {/* ── Section 4: Tài khoản (chỉ khi tạo mới) ─────────── */}
+                {!editing && (
+                    <>
+                        <div className="border-t border-neutral-200" />
+                        <div>
+                            <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
+                                Tài khoản đăng nhập
+                            </h3>
+
+                            <div className="flex items-start gap-2 p-3 bg-primary-50 border border-primary-100 rounded-btn">
+                                <input
+                                    type="checkbox"
+                                    id="enableAccount"
+                                    checked={createAccountForm.enable}
+                                    onChange={onEnableAccount}
+                                    className="mt-1 w-4 h-4 text-primary-600 border-neutral-300 rounded focus:ring-primary-500"
+                                />
+                                <label htmlFor="enableAccount" className="text-body text-neutral-700 cursor-pointer flex-1">
+                                    <span className="font-medium">Cấp tài khoản đăng nhập ngay</span>
+                                    <span className="block text-caption text-neutral-500">
+                                        Bật để tạo NV + tài khoản trong 1 thao tác (transaction atomic).
+                                        Nếu không, có thể cấp sau từ bảng.
+                                    </span>
+                                </label>
+                            </div>
+
+                            {createAccountForm.enable && (
+                                <div className="mt-4 space-y-4 p-4 bg-neutral-50 border border-neutral-200 rounded-btn">
+                                    <Input
+                                        label="Tên đăng nhập"
+                                        value={createAccountForm.tenDangNhap}
+                                        onChange={onTenDangNhap}
+                                        placeholder="VD: banhang.anh"
+                                        hint="Để trống = tự sinh từ tên NV (vd: nguyen.van.an). Theo naming-conventions: banhang.minh, kho.cuong"
+                                    />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <Select
+                                            label="Vai trò (phân quyền)"
+                                            value={createAccountForm.vaiTro}
+                                            onChange={onVaiTro}
+                                            options={[
+                                                { value: 'Admin', label: '👑 Quản lý (Admin)' },
+                                                { value: 'NV_BanHang', label: '🛒 Nhân viên bán hàng' },
+                                                { value: 'NV_Kho', label: '📦 Thủ kho' },
+                                            ]}
+                                        />
+                                        <Select
+                                            label="Trạng thái TK"
+                                            value={createAccountForm.trangThai}
+                                            onChange={onTrangThaiTK}
+                                            options={[
+                                                { value: 'HoatDong', label: '✓ Hoạt động' },
+                                                { value: 'Khoa', label: '✕ Khóa' },
+                                            ]}
+                                        />
+                                    </div>
+                                    <div className="flex items-start gap-2 p-3 bg-white border border-neutral-200 rounded-btn">
+                                        <input
+                                            type="checkbox"
+                                            id="autoPwd"
+                                            checked={createAccountForm.autoPassword}
+                                            onChange={onAutoPwd}
+                                            className="mt-1 w-4 h-4 text-primary-600 border-neutral-300 rounded focus:ring-primary-500"
+                                        />
+                                        <label htmlFor="autoPwd" className="text-body text-neutral-700 cursor-pointer flex-1">
+                                            <span className="font-medium">Tự sinh mật khẩu ngẫu nhiên</span>
+                                            <span className="block text-caption text-neutral-500">
+                                                Hệ thống tạo mật khẩu 12 ký tự (hoa/thường/số/đặc biệt) và hiển thị sau khi lưu.
+                                            </span>
+                                        </label>
+                                    </div>
+                                    {!createAccountForm.autoPassword && (
+                                        <Input
+                                            label="Mật khẩu"
+                                            type="text"
+                                            required
+                                            value={createAccountForm.matKhau}
+                                            onChange={onMatKhau}
+                                            placeholder="Tối thiểu 8 ký tự (hoa + thường + số + đặc biệt)"
+                                        />
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {formError && (
+                    <div className="p-3 bg-danger-50 border border-danger-100 rounded-btn text-caption text-danger-700">
+                        {formError}
+                    </div>
+                )}
+
+                <div className="flex gap-2 pt-2 justify-end border-t border-neutral-100">
+                    <Button
+                        variant="secondary"
+                        onClick={onClose}
+                        disabled={submitting}
+                    >
+                        Hủy
+                    </Button>
+                    <Button variant="primary" type="submit" loading={submitting}>
+                        {editing
+                            ? 'Cập nhật'
+                            : (createAccountForm.enable ? 'Tạo nhân viên + tài khoản' : 'Tạo nhân viên')}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
+    );
+}
+
+const EmployeeFormModalMemo = memo(EmployeeFormModal);
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 function NhanVienPage() {
@@ -402,15 +793,9 @@ function NhanVienPage() {
     const [vaiTro, setVaiTro] = useState('');
     const [trangThai, setTrangThai] = useState('');
 
-    // ── Modal: create / edit ────────────────────────────────────────────────
+    // ── Modal: create / edit (state ở EmployeeFormModal, page chỉ giữ open/editing) ─
     const [modalOpen, setModalOpen] = useState(false);
     const [editing, setEditing] = useState(null);
-    const [formData, setFormData] = useState({
-        tenNV: '', sdt: '', gioiTinh: '', luong: '', email: '', chucVu: '',
-        diaChi: '', ngayVaoLam: '', trangThai: 'DangLam', ghiChu: '',
-    });
-    const [formError, setFormError] = useState('');
-    const [submitting, setSubmitting] = useState(false);
 
     // ── Modal: detail ───────────────────────────────────────────────────────
     const [detailNV, setDetailNV] = useState(null);
@@ -487,47 +872,16 @@ function NhanVienPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [keyword, vaiTro, trangThai]);
 
-    // ── Modal: create / edit handlers ──────────────────────────────────────
-    const [createAccountForm, setCreateAccountForm] = useState({
-        enable: false,
-        tenDangNhap: '',
-        matKhau: '',
-        vaiTro: 'NV_BanHang',
-        trangThai: 'HoatDong',
-        autoPassword: true,
-    });
-
-    const openCreate = () => {
+    // ── Modal: create / edit (logic đã chuyển vào EmployeeFormModal) ──────
+    const openCreate = useCallback(() => {
         setEditing(null);
-        setFormError('');
-        setFormData({
-            tenNV: '', sdt: '', gioiTinh: '', luong: '', email: '', chucVu: '',
-            diaChi: '', ngayVaoLam: new Date().toISOString().split('T')[0], trangThai: 'DangLam', ghiChu: '',
-        });
-        setCreateAccountForm({
-            enable: false, tenDangNhap: '', matKhau: '',
-            vaiTro: 'NV_BanHang', trangThai: 'HoatDong', autoPassword: true,
-        });
         setModalOpen(true);
-    };
+    }, []);
 
-    const openEdit = (it) => {
+    const openEdit = useCallback((it) => {
         setEditing(it);
-        setFormError('');
-        setFormData({
-            tenNV: it.TenNV || '',
-            sdt: it.SDT || '',
-            gioiTinh: it.GioiTinh || '',
-            luong: it.Luong ?? '',
-            email: it.Email || '',
-            chucVu: it.ChucVu || '',
-            diaChi: it.DiaChi || '',
-            ngayVaoLam: it.NgayVaoLam ? new Date(it.NgayVaoLam).toISOString().split('T')[0] : '',
-            trangThai: it.TrangThai || 'DangLam',
-            ghiChu: it.GhiChu || '',
-        });
         setModalOpen(true);
-    };
+    }, []);
 
     // ── Modal: detail ───────────────────────────────────────────────────────
     const openDetail = useCallback(async (it) => {
@@ -552,64 +906,6 @@ function NhanVienPage() {
             setPhieuNhapLoading(false);
         }
     }, []);
-
-    // ── Submit form ─────────────────────────────────────────────────────────
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setFormError('');
-        if (!formData.tenNV.trim()) {
-            setFormError('Vui lòng nhập tên nhân viên');
-            return;
-        }
-        setSubmitting(true);
-        try {
-            // Normalize payload: luong string → number, empty string → 0
-            const payload = {
-                ...formData,
-                luong: formData.luong === '' ? 0 : Number(formData.luong) || 0,
-            };
-
-            if (editing) {
-                await nhanVienService.update(editing.MaNV, payload);
-                toast.success('Cập nhật thành công');
-            } else if (createAccountForm.enable) {
-                // Tạo NV + cấp TK trong 1 lần
-                const tkPayload = {
-                    tenDangNhap: createAccountForm.tenDangNhap.trim(),
-                    vaiTro: createAccountForm.vaiTro,
-                    trangThai: createAccountForm.trangThai,
-                    autoUsername: !createAccountForm.tenDangNhap,
-                    autoPassword: createAccountForm.autoPassword && !createAccountForm.matKhau,
-                };
-                if (createAccountForm.matKhau) tkPayload.matKhau = createAccountForm.matKhau;
-
-                const res = await nhanVienService.createWithAccount(payload, tkPayload);
-                toast.success('Tạo nhân viên và cấp tài khoản thành công');
-
-                // Hiển thị MK tạm nếu có
-                if (res?.data?.matKhauTam) {
-                    setTempPwdResult({
-                        tenDangNhap: res.data.taiKhoan.TenDangNhap,
-                        matKhauTam: res.data.matKhauTam,
-                        tenNV: formData.tenNV,
-                        action: 'create',
-                    });
-                }
-            } else {
-                await nhanVienService.create(payload);
-                toast.success('Tạo nhân viên thành công');
-            }
-            setModalOpen(false);
-            fetchData(pagination.page);
-            fetchStats();
-        } catch (err) {
-            const msg = err.response?.data?.error?.message || 'Thao tác thất bại';
-            setFormError(msg);
-            toast.error(msg);
-        } finally {
-            setSubmitting(false);
-        }
-    };
 
     // ── Delete ──────────────────────────────────────────────────────────────
     const handleDelete = async () => {
@@ -768,7 +1064,7 @@ function NhanVienPage() {
             key: 'avatar',
             label: '',
             width: '40px',
-            render: (it) => <EmployeeAvatar name={it.TenNV} role={it.VaiTro} />,
+            render: (it) => <EmployeeAvatarMemo name={it.TenNV} role={it.VaiTro} />,
         },
         {
             key: 'name',
@@ -1145,241 +1441,25 @@ function NhanVienPage() {
                 loading={loading}
             />
 
-            {/* ── Modal: Create / Edit ──────────────────────────────────────── */}
-            <Modal
+            {/* ── Modal: Create / Edit (đã tách thành EmployeeFormModal riêng) ─ */}
+            <EmployeeFormModalMemo
                 open={modalOpen}
+                editing={editing}
                 onClose={() => setModalOpen(false)}
-                title={editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}
-                description={editing ? 'Cập nhật thông tin nhân viên.' : 'Tạo hồ sơ nhân viên mới và cấp tài khoản đăng nhập (tuỳ chọn).'}
-                icon={editing ? <Edit2 /> : <Plus />}
-                size="xl"
-            >
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* ── Section 1: Thông tin cơ bản ───────────────────────── */}
-                    <div>
-                        <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-                            Thông tin cơ bản
-                        </h3>
-                        <div className="space-y-4">
-                            <Input
-                                label="Tên nhân viên"
-                                required
-                                value={formData.tenNV}
-                                onChange={(e) => setFormData({ ...formData, tenNV: e.target.value })}
-                                maxLength={200}
-                                placeholder="VD: Nguyễn Văn An"
-                            />
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <Input
-                                    label="Số điện thoại"
-                                    value={formData.sdt}
-                                    onChange={(e) => setFormData({ ...formData, sdt: e.target.value })}
-                                    placeholder="VD: 0912345678"
-                                />
-                                <Input
-                                    label="Email"
-                                    type="email"
-                                    value={formData.email}
-                                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                    placeholder="VD: nguyen.van.an@email.com"
-                                />
-                                <Select
-                                    label="Giới tính"
-                                    value={formData.gioiTinh}
-                                    onChange={(v) => setFormData({ ...formData, gioiTinh: v })}
-                                    options={[
-                                        { value: '', label: '—' },
-                                        { value: 'Nam', label: 'Nam' },
-                                        { value: 'Nữ', label: 'Nữ' },
-                                        { value: 'Khác', label: 'Khác' },
-                                    ]}
-                                    placeholder="—"
-                                />
-                                <Input
-                                    label="Chức vụ"
-                                    value={formData.chucVu}
-                                    onChange={(e) => setFormData({ ...formData, chucVu: e.target.value })}
-                                    placeholder="VD: Nhân viên bán hàng, Quản lý, Trưởng phòng..."
-                                />
-                            </div>
-                            <Input
-                                label="Địa chỉ"
-                                value={formData.diaChi}
-                                onChange={(e) => setFormData({ ...formData, diaChi: e.target.value })}
-                                placeholder="VD: 123 Nguyễn Trãi, Quận 1, TP.HCM"
-                            />
-                        </div>
-                    </div>
-
-                    {/* ── Divider ──────────────────────────────────────────── */}
-                    <div className="border-t border-neutral-200" />
-
-                    {/* ── Section 2: Công việc & lương ────────────────────── */}
-                    <div>
-                        <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-                            Công việc &amp; lương
-                        </h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <Input
-                                label="Lương cơ bản"
-                                type="number"
-                                min="0"
-                                step="100000"
-                                value={formData.luong}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    setFormData({ ...formData, luong: val === '' ? '' : Number(val) });
-                                }}
-                                placeholder="VD: 5000000"
-                                hint="VND"
-                            />
-                            <Input
-                                label="Ngày vào làm"
-                                type="date"
-                                value={formData.ngayVaoLam}
-                                onChange={(e) => setFormData({ ...formData, ngayVaoLam: e.target.value })}
-                            />
-                            <Select
-                                label="Trạng thái"
-                                value={formData.trangThai}
-                                onChange={(v) => setFormData({ ...formData, trangThai: v })}
-                                options={[
-                                    { value: 'DangLam', label: 'Đang làm' },
-                                    { value: 'NghiViec', label: 'Nghỉ việc' },
-                                ]}
-                            />
-                        </div>
-                    </div>
-
-                    {/* ── Section 3: Ghi chú ─────────────────────────────── */}
-                    <div>
-                        <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-                            Ghi chú
-                        </h3>
-                        <textarea
-                            className="w-full h-20 px-3 py-2 text-body text-neutral-900 bg-white border border-neutral-300 rounded-btn
-                                placeholder:text-neutral-400 resize-none
-                                focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500
-                                disabled:bg-neutral-50 disabled:text-neutral-500"
-                            value={formData.ghiChu}
-                            onChange={(e) => setFormData({ ...formData, ghiChu: e.target.value })}
-                            placeholder="Ghi chú thêm về nhân viên..."
-                            maxLength={1000}
-                        />
-                    </div>
-
-                    {/* ── Section 4: Tài khoản (chỉ khi tạo mới) ─────────── */}
-                    {!editing && (
-                        <>
-                            <div className="border-t border-neutral-200" />
-                            <div>
-                                <h3 className="text-caption font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-                                    Tài khoản đăng nhập
-                                </h3>
-
-                                <div className="flex items-start gap-2 p-3 bg-primary-50 border border-primary-100 rounded-btn">
-                                    <input
-                                        type="checkbox"
-                                        id="enableAccount"
-                                        checked={createAccountForm.enable}
-                                        onChange={(e) => setCreateAccountForm({ ...createAccountForm, enable: e.target.checked })}
-                                        className="mt-1 w-4 h-4 text-primary-600 border-neutral-300 rounded focus:ring-primary-500"
-                                    />
-                                    <label htmlFor="enableAccount" className="text-body text-neutral-700 cursor-pointer flex-1">
-                                        <span className="font-medium">Cấp tài khoản đăng nhập ngay</span>
-                                        <span className="block text-caption text-neutral-500">
-                                            Bật để tạo NV + tài khoản trong 1 thao tác (transaction atomic).
-                                            Nếu không, có thể cấp sau từ bảng.
-                                        </span>
-                                    </label>
-                                </div>
-
-                                {createAccountForm.enable && (
-                                    <div className="mt-4 space-y-4 p-4 bg-neutral-50 border border-neutral-200 rounded-btn">
-                                        <Input
-                                            label="Tên đăng nhập"
-                                            value={createAccountForm.tenDangNhap}
-                                            onChange={(e) => setCreateAccountForm({ ...createAccountForm, tenDangNhap: e.target.value })}
-                                            placeholder="VD: banhang.anh"
-                                            hint="Để trống = tự sinh từ tên NV (vd: nguyen.van.an). Theo naming-conventions: banhang.minh, kho.cuong"
-                                        />
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <Select
-                                                label="Vai trò (phân quyền)"
-                                                value={createAccountForm.vaiTro}
-                                                onChange={(v) => setCreateAccountForm({ ...createAccountForm, vaiTro: v })}
-                                                options={[
-                                                    { value: 'Admin', label: '👑 Quản lý (Admin)' },
-                                                    { value: 'NV_BanHang', label: '🛒 Nhân viên bán hàng' },
-                                                    { value: 'NV_Kho', label: '📦 Thủ kho' },
-                                                ]}
-                                            />
-                                            <Select
-                                                label="Trạng thái TK"
-                                                value={createAccountForm.trangThai}
-                                                onChange={(v) => setCreateAccountForm({ ...createAccountForm, trangThai: v })}
-                                                options={[
-                                                    { value: 'HoatDong', label: '✓ Hoạt động' },
-                                                    { value: 'Khoa', label: '✕ Khóa' },
-                                                ]}
-                                            />
-                                        </div>
-                                        <div className="flex items-start gap-2 p-3 bg-white border border-neutral-200 rounded-btn">
-                                            <input
-                                                type="checkbox"
-                                                id="autoPwd"
-                                                checked={createAccountForm.autoPassword}
-                                                onChange={(e) => setCreateAccountForm({ ...createAccountForm, autoPassword: e.target.checked, matKhau: '' })}
-                                                className="mt-1 w-4 h-4 text-primary-600 border-neutral-300 rounded focus:ring-primary-500"
-                                            />
-                                            <label htmlFor="autoPwd" className="text-body text-neutral-700 cursor-pointer flex-1">
-                                                <span className="font-medium">Tự sinh mật khẩu ngẫu nhiên</span>
-                                                <span className="block text-caption text-neutral-500">
-                                                    Hệ thống tạo mật khẩu 12 ký tự (hoa/thường/số/đặc biệt) và hiển thị sau khi lưu.
-                                                </span>
-                                            </label>
-                                        </div>
-                                        {!createAccountForm.autoPassword && (
-                                            <Input
-                                                label="Mật khẩu"
-                                                type="text"
-                                                required
-                                                value={createAccountForm.matKhau}
-                                                onChange={(e) => setCreateAccountForm({ ...createAccountForm, matKhau: e.target.value })}
-                                                placeholder="Tối thiểu 8 ký tự (hoa + thường + số + đặc biệt)"
-                                            />
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )}
-
-                    {formError && (
-                        <div className="p-3 bg-danger-50 border border-danger-100 rounded-btn text-caption text-danger-700">
-                            {formError}
-                        </div>
-                    )}
-
-                    <div className="flex gap-2 pt-2 justify-end border-t border-neutral-100">
-                        <Button
-                            variant="secondary"
-                            onClick={() => setModalOpen(false)}
-                            disabled={submitting}
-                        >
-                            Hủy
-                        </Button>
-                        <Button variant="primary" type="submit" loading={submitting}>
-                            {editing
-                                ? 'Cập nhật'
-                                : (createAccountForm.enable ? 'Tạo nhân viên + tài khoản' : 'Tạo nhân viên')}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                onSuccess={(evt) => {
+                    if (evt?.type === 'reload') {
+                        fetchData(pagination.page);
+                        fetchStats();
+                    } else if (evt?.type === 'tempPassword') {
+                        // Mở modal hiển thị MK tạm — dùng state ở page để tận dụng
+                        // modal đã có sẵn cho case cấp/reset TK.
+                        setTempPwdResult(evt.data);
+                    }
+                }}
+            />
 
             {/* ── Modal: Detail ──────────────────────────────────────────────── */}
-            <EmployeeDetailModal
+            <EmployeeDetailModalMemo
                 nv={detailNV}
                 hoaDon={hoaDon}
                 loadingHD={hoaDonLoading}

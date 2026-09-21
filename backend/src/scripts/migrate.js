@@ -350,79 +350,50 @@ async function applyFile(fileName) {
 }
 
 /**
- * 5. Auto-discover & apply all patch/seed SQL files
+ * 5. Apply all seed files in fixed order (idempotent)
  *
- * Quy tắc đặt tên file (CHỈ cần tuân theo, KHÔNG cần sửa code):
- *   - Format: `NN_description.sql`  (NN là số thứ tự 2 chữ số)
- *   - Vị trí: `backend/database/`  (KHÔNG đặt trong `archive/`)
- *   - Đặt số sao cho sort alphabetically = đúng thứ tự muốn chạy
- *
- * File ĐẶC BIỆT (bỏ qua, đã được xử lý ở step khác):
- *   - 01_create_tables.sql   → đã chạy ở createTables()
- *   - 02_seed_data.sql       → đã chạy ở seedData()
- *
- * Ví dụ với cấu trúc hiện tại:
- *   03_inventory.sql        → tự pick, chạy
- *   04_expiry_lots.sql      → tự pick, chạy
- *   05_medicines.sql        → tự pick, chạy
- *   06_sales.sql            → tự pick, chạy
- *   07_vouchers.sql         → tự pick, chạy
- *   08_audit_log.sql        → tự pick, chạy
- *   18_system_config.sql    → tự pick, chạy (số 18 > 8 → chạy SAU)
- *   19_xxx.sql (MỚI)        → tự pick, chạy — KHÔNG cần sửa code
- *   20_yyy.sql (MỚI)        → tự pick, chạy
- *   99_schema_patches.sql   → tự pick, chạy cuối cùng
- *
- * Idempotent: tất cả file đều dùng IF NOT EXISTS / IF EXISTS
- * → chạy nhiều lần OK, dữ liệu KHÔNG bị ảnh hưởng.
+ * Thứ tự QUAN TRỌNG — phải đúng FK ordering:
+ *   1. Schema ALTERs (99) — cần bảng đã có, không cần FK mới
+ *   2. Inventory (03) — FK: MaPN → PhieuNhap, MaThuoc → Thuoc
+ *   3. Expiry lots (04) — FK: MaPN → PhieuNhap, MaThuoc → Thuoc
+ *   4. Medicines (05) — FK: MaNV → NhanVien, MaDM → DanhMuc
+ *      (Thuoc cần MaDM đã tồn tại; NhanVien cần bảng NhanVien đã có)
+ *   5. Sales (06) — FK: MaLo → LoThuoc, MaKH → KhachHang, MaNV → NhanVien
+ *   6. Vouchers (07) — FK: MaHD → HoaDon, MaNV → NhanVien
+ *   7. Audit log (08) — ghi nhận seed hoàn tất
  */
-async function applyPatches() {
-    console.log(`\n🔧 [5/5] Auto-discover & apply patch files...`);
+async function applySeedFiles() {
+    console.log(`\n🔧 [5/5] Apply seed files in order...`);
 
-    const dbDir = path.join(__dirname, '..', '..', 'database');
-    const allFiles = fs.readdirSync(dbDir);
-
-    // Regex: NN_description.sql (NN là số, KHÔNG phải 01/02)
-    // Sort alphabetically → chạy theo thứ tự số
-    const patchFiles = allFiles
-        .filter(f => /^\d{2,}_.*\.sql$/i.test(f))   // đúng format NN_xxx.sql
-        .filter(f => !f.startsWith('01_'))           // skip 01_create_tables.sql
-        .filter(f => !f.startsWith('02_'))           // skip 02_seed_data.sql
-        .sort();                                      // alphabetical sort = theo số
-
-    if (patchFiles.length === 0) {
-        console.log(`   ℹ️  Không có patch file nào trong database/`);
-        return;
-    }
-
-    console.log(`   📋 Tìm thấy ${patchFiles.length} patch file(s), chạy theo thứ tự:`);
-    patchFiles.forEach((f, i) => console.log(`      ${i + 1}. ${f}`));
+    // Thứ tự: schema patches → inventory → expiry → medicines → sales → vouchers → audit → system-config
+    const seedFiles = [
+        '99_schema_patches.sql',
+        '18_patch_nhanvien_profile.sql',
+        '19_patch_taikhoan_mustchangepassword.sql',
+        '03_inventory.sql',
+        '04_expiry_lots.sql',
+        '05_medicines.sql',
+        '06_sales.sql',
+        '07_vouchers.sql',
+        '08_audit_log.sql',
+        '18_system_config.sql',
+    ];
 
     let allOk = true;
-    let successCount = 0;
-    const failed = [];
-
-    for (const file of patchFiles) {
+    for (const file of seedFiles) {
         try {
             await applyFile(file);
-            successCount += 1;
         } catch (err) {
             console.error(`   ❌ Lỗi khi chạy ${file}: ${err.message}`);
             allOk = false;
-            failed.push({ file, error: err.message });
         }
     }
 
-    console.log(`\n   📊 Kết quả: ${successCount}/${patchFiles.length} file thành công`);
-    if (failed.length > 0) {
-        console.log(`   ⚠️  File thất bại:`);
-        failed.forEach(({ file, error }) => console.log(`      - ${file}: ${error}`));
+    if (allOk) {
+        console.log(`   ✅ Apply seed files hoàn tất.`);
+    } else {
+        throw new Error('Một hoặc nhiều seed file thất bại.');
     }
-
-    if (!allOk) {
-        throw new Error(`${failed.length} patch file(s) thất bại.`);
-    }
-    console.log(`   ✅ Apply patches hoàn tất.`);
 }
 
 /**
@@ -469,7 +440,7 @@ async function resetDatabase() {
         await createTables();
         await seedData();
         await seedAccounts();
-        await applyPatches();
+        await applySeedFiles();
 
         console.log(`\n✅ RESET HOÀN TẤT!`);
     } catch (err) {
@@ -497,7 +468,7 @@ async function main() {
                 await createTables();
                 await seedData();
                 await seedAccounts();
-                await applyPatches();
+                await applySeedFiles();
                 console.log(`\n${'═'.repeat(60)}`);
                 console.log(`✅ SETUP HOÀN TẤT!`);
                 console.log(`${'═'.repeat(60)}`);
@@ -531,7 +502,7 @@ async function main() {
 
             case 'patches':
                 // Chỉ apply seed files (nếu tables đã tồn tại)
-                await applyPatches();
+                await applySeedFiles();
                 console.log(`\n✅ Apply seed files hoàn tất!`);
                 break;
 
@@ -546,7 +517,7 @@ async function main() {
             default:
                 console.log(`\n❌ Unknown action: ${action}`);
                 console.log(`\nUsage:`);
-                console.log(`   node migrate.js setup      # Tạo DB + tables + seed + accounts + patches (auto-discover)`);
+                console.log(`   node migrate.js setup      # Tạo DB + tables + seed + accounts + patches`);
                 console.log(`   node migrate.js tables     # Chỉ tạo tables`);
                 console.log(`   node migrate.js seed       # Chỉ seed data`);
                 console.log(`   node migrate.js accounts   # Chỉ tạo accounts`);

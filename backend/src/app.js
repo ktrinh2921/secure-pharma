@@ -31,7 +31,9 @@ app.use(helmet({
       'img-src': ["'self'", 'data:', 'https:'],
       'font-src': ["'self'", 'data:', 'https://unpkg.com'],
       'connect-src': ["'self'", 'https://unpkg.com'],
-      // Cho phép nhúng vào iframe trên FE dev server (localhost)
+      // Cho phép nhúng vào iframe trên FE dev server (localhost + LAN).
+      // Trong dev, chấp nhận http:* để Swagger embed trên mọi IP LAN.
+      // Trong production, set FRONTEND_URL cụ thể rồi giới hạn lại.
       // 'frame-ancestors' KHÔNG có useDefaults — phải set thủ công
       'frame-ancestors': [
         "'self'",
@@ -51,13 +53,17 @@ app.use(helmet({
   frameguard: false
 }));
 
-// CORS - cho phép FE dev server
-app.use(cors({
-    origin: process.env.NODE_ENV === 'production'
-        ? process.env.FRONTEND_URL
-        : ['http://localhost:5173', 'http://localhost:3000'],
+// CORS - cho phép FE dev server.
+// Dev: chấp nhận mọi origin trừ file:// (để máy khác trong LAN truy cập FE trên IP nào cũng được).
+// Prod: chỉ whitelist FRONTEND_URL qua env.
+const isProd = process.env.NODE_ENV === 'production';
+const corsOptions = {
+    origin: isProd
+        ? (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(s => s.trim()) : false)
+        : true, // dev: reflect request origin (kèm credentials vẫn OK vì same-site=false)
     credentials: true
-}));
+};
+app.use(cors(corsOptions));
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));

@@ -136,6 +136,7 @@ Mở `http://localhost:5173` → Click "Test API Connection" để verify.
 | [`API.md`](./docs/API.md) | 🔌 Tham chiếu Backend API đầy đủ (~70 endpoints, 13 module) |
 | [`SECURITY.md`](./docs/SECURITY.md) | 🔒 Giải thích các cơ chế bảo mật (RBAC, JWT, bcrypt, AES, XSS, rate-limit, audit) |
 | [`giai-dap-18-9.md`](./docs/giai-dap-18-9.md) | 📋 Giải đáp thắc mắc ngày 18/9 — phân loại KH/NCC, thiết bị khác đăng nhập, tài liệu API, quyền Admin |
+| [`USE_CASE.md`](./docs/USE_CASE.md) | 🎭 Sơ đồ & đặc tả 29 Use Case + Sequence Diagram (Bán hàng, Huỷ HĐ) + Activity Diagram (Nhập thuốc) |
 
 ---
 

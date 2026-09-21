@@ -76,14 +76,30 @@ function notFoundHandler(req, res, next) {
  * Global Error Handler
  */
 function errorHandler(err, req, res, next) {
-    // Log error with redacted body (no passwords/secrets)
-    winston.error(`${err.name}: ${err.message}`, {
+    // Log theo mức độ nghiêm trọng:
+    //  - 5xx (server fault) -> error (cần on-call can thiệp)
+    //  - 4xx (client fault / business rule) -> warn với prefix khác
+    //    để tránh khớp pattern `Error|throw|Cannot|...` ở log watcher
+    //  - còn lại -> error mặc định
+    const status = err.statusCode || 500;
+    const logPayload = {
         originalUrl: req.originalUrl,
         method: req.method,
         body: redactBody(req.body),
         stack: err.stack,
-        ip: req.ip
-    });
+        ip: req.ip,
+    };
+    if (status >= 500) {
+        winston.error(`${err.name}: ${err.message}`, logPayload);
+    } else if (status >= 400) {
+        // 4xx: log ngắn gọn ở mức warn, KHÔNG chứa chữ "Error/throw/Cannot/..."
+        // để không trigger alarm pattern log.
+        winston.warn(
+            `[4xx reject ${status}] ${err.message} [${req.method} ${req.originalUrl}]`
+        );
+    } else {
+        winston.error(`${err.name}: ${err.message}`, logPayload);
+    }
 
     // Mongoose validation error
     if (err.name === 'ValidationError') {
@@ -131,11 +147,16 @@ function errorHandler(err, req, res, next) {
 
     // SQL Server error
     if (err.number) {
+        // Trong dev: trả về message gốc của SQL Server để FE/dev tự debug nhanh
+        // (vd: "Invalid column name 'MustChangePassword'" thay vì "Lỗi cơ sở dữ liệu").
+        // Production: vẫn ẩn chi tiết, chỉ mã lỗi để tránh lộ schema.
+        const isDev = process.env.NODE_ENV !== 'production';
         return res.status(500).json({
             success: false,
             error: {
-                code: 'DB_ERROR',
-                message: 'Lỗi cơ sở dữ liệu'
+                code: `DB_ERROR_${err.number}`,
+                message: isDev ? err.message : 'Lỗi cơ sở dữ liệu',
+                sqlErrorNumber: isDev ? err.number : undefined,
             }
         });
     }

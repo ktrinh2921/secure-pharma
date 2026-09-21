@@ -21,7 +21,8 @@
 8. [Bước 7 — Verify end-to-end](#8-bước-7--verify-end-to-end)
 9. [Tài khoản demo](#9-tài-khoản-demo)
 10. [Troubleshooting](#10-troubleshooting)
-11. [Production checklist](#11-production-checklist)
+11. [Truy cập cùng mạng LAN](#11-truy-cập-cùng-mạng-lan-máy-khác-trong-nhàvăn-phòng)
+12. [Production checklist](#12-production-checklist)
 
 ---
 
@@ -78,24 +79,30 @@ Các lệnh `db:*` có sẵn (xem `backend/package.json`):
 | `npm run db:seed` | Chỉ seed dữ liệu mẫu (danh mục, thuốc, khách hàng…) |
 | `npm run db:accounts` | Tạo 3 tài khoản demo + 3 nhân viên |
 | `npm run db:setup` | Chạy đầy đủ tables + seed + accounts + extra |
+| `npm run db:patches` *(alias: `db:migrate`)* | **Chỉ chạy các file schema patch** (idempotent) — dùng khi pull code mới có patch mới |
 | `npm run db:reset` | ⚠️ **Xóa toàn bộ DB và tạo lại từ đầu** |
 | `npm run db:generate` | Đọc schema DB đang chạy, xuất file `database/02_generated_tables.sql` (backup schema hoặc share cấu trúc; file cũ nằm trong `database/archive/`) |
 
 > ⚠️ `db:reset` là **destructive** — chỉ dùng trên môi trường dev, sẽ xóa hết dữ liệu.
 > 💡 `db:generate` chỉ xuất **schema (tables/FK/index/CHECK)** — KHÔNG xuất dữ liệu. Bạn tự lo phần INSERT bằng `db:seed` hoặc viết script riêng.
 
-#### 🤖 Auto-discover patches
+### 2.4. Schema patches & auto-migrate (khi pull code mới)
 
-Bước **extra patches** (99_schema_patches, 18_system_config, 03_inventory, …) được `migrate.js` **tự động quét** từ folder `database/`. Quy tắc đặt tên để tự động được pick:
+Repo có thêm các file **schema patch** dạng `NN_patch_*.sql` trong `backend/database/` (vd: `18_patch_nhanvien_profile.sql`, `99_schema_patches.sql`, `18_system_config.sql`). Các file này **bổ sung cột/bảng** cho schema ban đầu và đều được viết **idempotent** (chạy nhiều lần không lỗi).
 
-- File phải có dạng `NN_description.sql` (NN là số thứ tự 2 chữ số, vd: `03_inventory.sql`, `99_schema_patches.sql`)
-- KHÔNG bắt đầu bằng `01_` hoặc `02_` (đó là 2 file đặc biệt đã được xử lý riêng)
-- KHÔNG đặt trong `database/archive/` (đã được ignore)
-- Thứ tự chạy = sort alphabetically = theo số NN
+Khi pull code mới mà có patch mới, có 2 cách áp dụng:
 
-**Lợi ích:** Thêm patch mới chỉ cần tạo file `NN_xxx.sql` đúng quy tắc → chạy `npm run db:setup` hoặc `npm run db:patches` là tự pick. KHÔNG cần sửa `migrate.js`.
+**Cách 1 — Tự động (khuyến nghị):** chỉ cần `npm start` / `npm run dev`. Server sẽ tự gọi `applyPatchesOnBoot()` ngay sau khi DB connect thành công. Tự tắt bằng `AUTO_MIGRATE=false` trong `.env` nếu muốn boot nhanh để debug.
 
-### 2.4. Verify database
+**Cách 2 — Chạy tay:**
+
+```bash
+npm run db:patches       # hoặc: npm run db:migrate
+```
+
+> ⚠️ Triệu chứng cổ điển khi **quên apply patch**: API trả `500 Internal Server Error`, mở log backend thấy `Invalid column name 'xxx'` (vd: `Email`, `ChucVu`, `DiaChi`, `GhiChu` của bảng `NhanVien`). Chạy `npm run db:patches` hoặc restart server (để auto-migrate heal) là khỏi.
+
+### 2.5. Verify database
 
 Trong SSMS:
 
@@ -340,6 +347,14 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
+### ❌ API trả `500 Internal Server Error` với log `Invalid column name 'xxx'`
+- **Schema chưa được patch** — DB thiếu cột mà code BE đang select.
+- Triệu chứng hay gặp: thiếu `NhanVien.Email/ChucVu/DiaChi/GhiChu` → mọi API liên quan đến `/api/nhan-vien` đều 500.
+- Cách khắc phục (1 trong 2):
+  - **Tự động:** restart server (`npm run dev`) — `autoMigrate` sẽ apply patch idempotent ngay khi DB connect.
+  - **Tay:** `npm run db:patches` (alias: `npm run db:migrate`).
+- Xem chi tiết ở [mục 2.4](#24-schema-patches--auto-migrate-khi-pull-code-moi).
+
 ### ❌ Mở `localhost:5000/api/docs` thấy trang trắng / "site can't be reached"
 - **Backend không chạy ở port 5000** — port mặc định là **`8080`**. Truy cập đúng URL: **`http://localhost:8080/api/docs`**.
 - Kiểm tra port thực tế:
@@ -379,7 +394,83 @@ npm run dev
 
 ---
 
-## 11. Production checklist
+## 11. Truy cập cùng mạng LAN (máy khác trong nhà/văn phòng)
+
+Mặc định `dev.ps1` chỉ phục vụ `localhost`. Để **điện thoại, laptop khác** trong cùng mạng LAN cũng vào được FE + gọi được BE, làm theo 3 bước:
+
+### 11.1. Backend đã listen trên `0.0.0.0` (mặc định mới)
+
+Trong `backend/src/server.js` đã có:
+
+```js
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => { … });
+```
+
+→ Khi start, banner BE sẽ in ra **Network URL**, ví dụ:
+
+```
+🌐 Local:           http://localhost:8080
+🌐 Network (LAN):   http://192.168.1.20:8080
+```
+
+> 💡 Nếu muốn **khóa** lại chỉ-local: đặt `HOST=127.0.0.1` trong `backend/.env` rồi restart.
+
+### 11.2. Trỏ Vite proxy về IP LAN của BE
+
+Vite proxy lấy target từ `frontend/.env` (xem `frontend/vite.config.js`). Mặc định nó trỏ về `localhost` — **máy khác vào FE qua IP LAN thì proxy sẽ gọi về localhost của chính máy khách → lỗi**.
+
+Tạo file `frontend/.env` (copy từ `.env.example`):
+
+```env
+# Đổi 192.168.1.20 thành IP LAN của máy bạn (xem banner BE)
+VITE_API_URL=http://192.168.1.20:8080
+```
+
+Sau đó **restart FE** (`Ctrl+C` trong cửa sổ FE rồi `npm run dev`) để Vite đọc env mới.
+
+### 11.3. Mở Windows Firewall cho port 8080 (TCP, Inbound)
+
+Nếu máy khác vẫn không vào được, mở Firewall bằng **một trong hai cách**:
+
+**Cách A — GUI (khuyến nghị):**
+1. `Win` → gõ `wf.msc` → Enter → mở **Windows Defender Firewall with Advanced Security**
+2. **Inbound Rules** → **New Rule…**
+3. Chọn **Port** → Next → **TCP**, specific local port `8080` → Next
+4. **Allow the connection** → Next
+5. Tick **Private** (chỉ mạng nội bộ) → Next
+6. Name: `SecurePharma BE 8080 (LAN)` → Finish
+7. Lặp lại với port `4444` cho Vite dev server
+
+**Cách B — PowerShell (run as Admin):**
+
+```powershell
+New-NetFirewallRule -DisplayName "SecurePharma BE 8080 (LAN)" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow -Profile Private
+New-NetFirewallRule -DisplayName "SecurePharma FE 4444 (LAN)" -Direction Inbound -LocalPort 4444 -Protocol TCP -Action Allow -Profile Private
+```
+
+> ⚠️ Mở profile **Private** thôi, **KHÔNG mở Public** (tránh máy tính ngoài internet vào được).
+
+### 11.4. Kiểm tra
+
+Từ máy khác (cùng Wi-Fi/Ethernet):
+
+1. Mở trình duyệt gõ `http://<IP-LAN-MÁY-BẠN>:4444` → thấy trang Login của FE.
+2. Đăng nhập thử → mở DevTools (F12) → tab **Network** xem request `/api/...` trả 200.
+3. Thử gọi thẳng API: `http://<IP-LAN-MÁY-BẠN>:8080/api/health` → trả JSON `{ success: true, data: { status: 'ok', ... } }`.
+
+### 11.5. Tóm tắt nhanh khi demo cho giảng viên
+
+| Bước | Làm gì | Ghi nhớ |
+|---|---|---|
+| 1 | Restart bằng `.\dev.ps1` | Xem banner → ghi nhớ `Network (LAN)` IP |
+| 2 | Tạo `frontend/.env` với `VITE_API_URL=http://<IP>:8080` | Restart FE sau khi sửa |
+| 3 | Firewall mở port 8080 + 4444 (Private) | 1 lần duy nhất |
+| 4 | Giảng viên vào `http://<IP>:4444` từ điện thoại/laptop | Đăng nhập bằng tài khoản demo |
+
+---
+
+## 12. Production checklist
 
 Trước khi deploy, **đảm bảo** đã làm các việc sau (KHÔNG được quên):
 

@@ -5,7 +5,7 @@
  *   <Input label="Tên thuốc" required icon={<Pill/>} value={...} onChange={...} />
  *   <Input label="Giá" type="number" error="Giá phải ≥ 0" />
  */
-import { forwardRef, useId } from 'react';
+import { memo, forwardRef, useId } from 'react';
 import { cn } from '../../utils/cn';
 import { renderIcon } from '../../utils/renderIcon';
 
@@ -90,4 +90,25 @@ const Input = forwardRef(function Input(
   );
 });
 
-export default Input;
+function inputPropsEqual(prev, next) {
+  // Skip re-render khi value/error/hint/disabled/required không đổi.
+  // (onChange thường là arrow mới, không kiểm tra — việc memo vẫn giúp
+  // skip DOM diff nếu các prop "nặng" (label, placeholder, options) không đổi.)
+  return (
+    prev.value === next.value &&
+    prev.error === next.error &&
+    prev.hint === next.hint &&
+    prev.disabled === next.disabled &&
+    prev.required === next.required &&
+    prev.label === next.label &&
+    prev.placeholder === next.placeholder &&
+    prev.className === next.className &&
+    prev.inputClassName === next.inputClassName &&
+    prev.maxLength === next.maxLength &&
+    prev.min === next.min &&
+    prev.max === next.max &&
+    prev.type === next.type
+  );
+}
+
+export default memo(Input, inputPropsEqual);
